@@ -40,7 +40,7 @@ if __name__ == '__main__':
     # Calculate the eucludian distance
     df['distance'] = np.sqrt((df['x'] - x_ref)**2 + (df['y'] - y_ref)**2)
 
-    months_ago = 24
+    months_ago = 60
     flat_type = ''
     period_ago = pd.Timestamp.today() - pd.DateOffset(months=months_ago)
     query = df
@@ -56,6 +56,13 @@ if __name__ == '__main__':
 
     flat_counts = query['remaining_lease_int'].value_counts().sort_index(ascending=False)
     print(flat_counts)
+
+    group = query.groupby('remaining_lease_int')['price_per_sqft']
+
+    median = group.median().sort_index(ascending=False)
+    mean = group.mean().sort_index(ascending=False)
+    # print(median)
+    # print(mean)
 
     # median_prices = query.groupby('flat_age_int')['price_per_sqft'].median().reset_index()
     plt.figure(figsize=(12, 8))

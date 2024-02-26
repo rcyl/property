@@ -13,13 +13,11 @@ def plot(df, title):
     plt.figure(figsize=(12, 8))
     sb = sns.boxplot(x='remaining_lease_int', y='price_per_sqft', data=df)
     sb.invert_xaxis()
-    
     plt.title(title)
     plt.xlabel('Remaining Lease (Years)')
     plt.ylabel('Price Per Square Foot (SGD)')
     plt.xticks(rotation=45)  # Rotate x-axis labels for better readability
     plt.tight_layout()  # Adjust layout to make room for the rotated x-axis labels
-    plt.savefig('figure.png', format='png', dpi=300)
     plt.show()
 
 def get_plot_title(towns, flat_types, flat_models_exclude, months_ago):
@@ -52,16 +50,13 @@ def query(df, towns, flat_types, flat_models_exclude, months_ago):
     query = df
 
     if towns:
-        for town in towns:
-            query = query[query['town'] == town]
+        query = query[query['town'].isin(towns)]
     
     if flat_types:
-        for flat_type in flat_types:
-            query = query[query['flat_type'] == flat_type]
+        query = query[query['flat_type'].isin(flat_types)]
 
     if flat_models_exclude:
-        for flat_model_exclude in flat_models_exclude:
-            query = query[query['flat_model'] != flat_model_exclude]
+        query = query[~query['flat_model'].isin(flat_models_exclude)]
 
     if months_ago:
         period_ago = pd.Timestamp.today() - pd.DateOffset(months=months_ago)
@@ -79,7 +74,7 @@ if __name__ == '__main__':
     
     df = pd.read_csv(sys.argv[1])
 
-    towns = ['QUEENSTOWN']
+    towns = ['QUEENSTOWN', 'CLEMENTI']
     flat_types = ['4 ROOM']
     flat_models_exclude = [
         'Premium Apartment', 'Premium Apartment Loft', 'DBSS'
