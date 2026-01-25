@@ -1,92 +1,120 @@
-from datetime import datetime
-import seaborn as sns
-import matplotlib
-matplotlib.use('TkAgg')  # Or any other X11 back-end
-import matplotlib.pyplot as plt
+"""
+This script visualizes HDB resale prices (Price Per Square Foot vs Remaining Lease)
+for flats located within a specified radius of a target address by querying
+ the normalized SQLite database.
+
+Usage:
+    python plot_neighbour.py <transactions.db> <target_address> <radius_in_m>
+"""
+
+import sqlite3
 import pandas as pd
 import numpy as np
-import csv
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
 import sys
+from datetime import datetime
 import addr_query
 
-if __name__ == '__main__':
+def get_neighbourhood_data(db_file, x_ref, y_ref, radius_m, months_ago=12, flat_types=None):
+    conn = sqlite3.connect(db_file)
+    
+    # 1. Bounding Box Filter (SQL level for speed)
+    # This roughly filters blocks before calculating exact distance in Python
+    query = """
+        SELECT 
+            t.remaining_lease,
+            (t.resale_price / (t.floor_area_sqm * 10.7639)) AS price_per_sqft,
+            b.x,
+            b.y,
+            ft.name AS flat_type,
+            t.month
+        FROM transactions t
+        JOIN blocks b ON t.block_id = b.id
+        JOIN flat_types ft ON t.flat_type_id = ft.id
+        WHERE b.x BETWEEN ? AND ?
+          AND b.y BETWEEN ? AND ?
+          AND t.month >= date('now', ?)
+    """
+    
+    params = [
+        x_ref - radius_m, x_ref + radius_m,
+        y_ref - radius_m, y_ref + radius_m,
+        f'-{months_ago} months'
+    ]
+    
+    print(f"Fetching candidates from bounding box...")
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+    
+    if df.empty:
+        return df
 
-    if len(sys.argv) != 5:
-        print("Usage is neighbour.py <resale_file.csv> <addr.csv> <addr> <radius in m>")
+    # 2. Precise Distance Filter (Python level)
+    df['distance'] = np.sqrt((df['x'] - x_ref)**2 + (df['y'] - y_ref)**2)
+    df = df[df['distance'] <= radius_m]
+    
+    # 3. Flat Type Filter
+    if flat_types:
+        df = df[df['flat_type'].isin(flat_types)]
+        
+    return df
+
+def plot_neighbourhood(df, target_addr, radius_m, title, filename="neighbourhood_psf.png"):
+    plt.figure(figsize=(12, 8))
+    
+    # Cast to int for grouping
+    df['remaining_lease_int'] = df['remaining_lease'].astype(int)
+    
+    # Determine the full range of years to show gaps in the axis
+    if not df.empty:
+        min_year = int(df['remaining_lease_int'].min())
+        max_year = int(df['remaining_lease_int'].max())
+        full_range = range(min_year, max_year + 1)
+    else:
+        full_range = None
+    
+    sb = sns.boxplot(x='remaining_lease_int', y='price_per_sqft', data=df, order=full_range)
+    sb.invert_xaxis()
+    
+    plt.title(title)
+    plt.xlabel('Remaining Lease (Years)')
+    plt.ylabel('Price Per Square Foot (SGD)')
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(filename)
+    print(f"Plot saved to {filename}")
+
+if __name__ == '__main__':
+    if len(sys.argv) != 4:
+        print("Usage: python plot_neighbour.py <transactions.db> <target_address> <radius_in_m>")
         sys.exit(1)
     
-    resale_csv = sys.argv[1]
-    blocks_csv = sys.argv[2]
-    addr = sys.argv[3]
-    x_ref, y_ref = addr_query.query_addr(addr)
-    radius_in_m = float(sys.argv[4])
-   
-    x_ref = float(x_ref)
-    y_ref = float(y_ref)
-
-    print(x_ref, y_ref)
-
-    df = pd.read_csv(resale_csv)
-    blocks = pd.read_csv(blocks_csv)
-
-    # Change the month to dataframes month
-    df['month'] = pd.to_datetime(df['month'])
-
-    df['address'] = df['block'] + ' ' + df['street_name']
+    db_file = sys.argv[1]
+    target_addr = sys.argv[2]
+    radius_m = float(sys.argv[3])
     
-    # Merge the two dataframes into 1
-    df = pd.merge(df, blocks, on='address')
+    print(f"Querying coordinates for {target_addr}...")
+    x_ref, y_ref = addr_query.query_addr(target_addr)
+    x_ref, y_ref = float(x_ref), float(y_ref)
+    print(f"Reference Coordinates: {x_ref}, {y_ref}")
+
+    # Configuration
+    months_ago = 24 # Increased default for better sample size in small radii
+    flat_types = ['3 ROOM', '4 ROOM', '5 ROOM']
     
-    # Calculate the eucludian distance
-    df['distance'] = np.sqrt((df['x'] - x_ref)**2 + (df['y'] - y_ref)**2)
-
-    months_ago = 60
-    flat_type = ''
-    period_ago = pd.Timestamp.today() - pd.DateOffset(months=months_ago)
-    query = df
-    query = query[query['month'] >= period_ago]
-    if flat_type:
-        query = query[query['flat_type'] == flat_type]
-    query = query[query['distance'] <= radius_in_m]
- 
-    # pd.set_option('display.max_rows', None)  # Replace None with a number if you only want to increase the limit
-    # Set option to display all columns (or a specific number)
-    # pd.set_option('display.max_columns', None) 
-    print(query)
-
-    flat_counts = query['remaining_lease_int'].value_counts().sort_index(ascending=False)
-    print(flat_counts)
-
-    group = query.groupby('remaining_lease_int')['price_per_sqft']
-
-    median = group.median().sort_index(ascending=False)
-    mean = group.mean().sort_index(ascending=False)
-    # print(median)
-    # print(mean)
-
-    # median_prices = query.groupby('flat_age_int')['price_per_sqft'].median().reset_index()
-    plt.figure(figsize=(12, 8))
-    sb = sns.boxplot(x='remaining_lease_int', y='price_per_sqft', data=query)
-    sb.invert_xaxis()
-
-    now = datetime.now()
-    year, week_num, day_of_week = now.isocalendar()
-
-    flat_title = 'ALL FLATS'
-    if flat_type: 
-        flat_title = flat_type
-
-    title = """Price Per Square Foot vs Remaining Lease for {} Flats within {} 
-    meters from {} with transactions within {} months from 
-    week {} {}""".format(flat_title, radius_in_m, addr, months_ago, week_num, year)
-    plt.title(title)
-    plt.xlabel('Flat Age (Years)')
-    plt.ylabel('Price Per Square Foot (SGD)')
-    plt.xticks(rotation=45)  # Rotate x-axis labels for better readability
-    plt.tight_layout()  # Adjust layout to make room for the rotated x-axis labels
-    plt.show()
-
-
-
-
-  
+    df = get_neighbourhood_data(db_file, x_ref, y_ref, radius_m, months_ago, flat_types)
+    
+    if df.empty:
+        print(f"No transactions found within {radius_m}m of {target_addr} in the last {months_ago} months.")
+    else:
+        print(f"Found {len(df)} transactions. Plotting...")
+        
+        now = datetime.now()
+        year, week_num, _ = now.isocalendar()
+        title = (f"PSF vs Remaining Lease within {radius_m}m of {target_addr}\n"
+                 f"({', '.join(flat_types)}) - Last {months_ago} months (Week {week_num} {year})")
+        
+        plot_neighbourhood(df, target_addr, radius_m, title)

@@ -1,3 +1,11 @@
+"""
+This script queries the OneMap API to retrieve the X and Y coordinates (SVY21)
+for a given address string. It is intended to be used as a command-line tool.
+
+Usage:
+    python addr_query.py "<address>"
+"""
+
 import coord
 import sys
 import requests
