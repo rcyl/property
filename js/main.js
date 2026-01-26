@@ -133,18 +133,29 @@ function populateFilters() {
     // Populate Flat Types
     try {
         const typesSelect = $("#filter-flat-types");
-        if (typesSelect.hasClass("select2-hidden-accessible")) {
-            typesSelect.select2('destroy');
-        }
-        typesSelect.empty();
+        const neighbourTypesSelect = $("#neighbour-flat-types");
+        
+        [typesSelect, neighbourTypesSelect].forEach(select => {
+            if (select.hasClass("select2-hidden-accessible")) {
+                select.select2('destroy');
+            }
+            select.empty();
+        });
 
         const typeSel = db.prepare("SELECT name FROM flat_types ORDER BY name");
         while (typeSel.step()) {
             const name = typeSel.get()[0];
             typesSelect.append(new Option(name, name));
+            neighbourTypesSelect.append(new Option(name, name));
         }
         typeSel.free();
+        
         typesSelect.select2({ theme: "bootstrap-5", placeholder: "All Types", width: '100%' });
+        neighbourTypesSelect.select2({ theme: "bootstrap-5", placeholder: "All Types", width: '100%' });
+        
+        // Set defaults for neighbourhood matching plot_neighbour.py
+        neighbourTypesSelect.val(['3 ROOM', '4 ROOM', '5 ROOM']).trigger('change');
+
     } catch (e) { 
         console.log("Flat Types table not found or empty", e); 
     }
@@ -504,4 +515,129 @@ function plotAnalysis() {
     };
 
     Plotly.newPlot('plot-container', data, layout);
+}
+
+async function plotNeighbourhood() {
+    if (!db) {
+        showError("Please load a database first.");
+        return;
+    }
+
+    const targetAddr = $("#target-address").val();
+    const radiusM = parseFloat($("#target-radius").val()) || 1000;
+    const monthsAgo = $("#neighbour-months").val() || 24;
+    const flatTypes = $("#neighbour-flat-types").val();
+
+    if (!targetAddr) {
+        showError("Please enter a target address.");
+        return;
+    }
+
+    $("#data").hide();
+    $("#error").hide();
+    $("#info").hide();
+    setIsLoading(true);
+
+    try {
+        // 1. Geocode via OneMap API
+        const response = await fetch(`https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${encodeURIComponent(targetAddr)}&returnGeom=Y&getAddrDetails=Y`);
+        const result = await response.json();
+        
+        if (result.found === 0) {
+            setIsLoading(false);
+            showError("Address not found on OneMap.");
+            return;
+        }
+
+        const xRef = parseFloat(result.results[0].X);
+        const yRef = parseFloat(result.results[0].Y);
+        const foundAddr = result.results[0].ADDRESS;
+
+        // 2. Query bounding box from DB
+        let query = `
+            SELECT 
+                t.remaining_lease,
+                (t.resale_price / (t.floor_area_sqm * 10.7639)) AS price_per_sqft,
+                b.x, b.y,
+                ft.name AS flat_type
+            FROM transactions t
+            JOIN blocks b ON t.block_id = b.id
+            JOIN flat_types ft ON t.flat_type_id = ft.id
+            WHERE b.x BETWEEN ${xRef - radiusM} AND ${xRef + radiusM}
+              AND b.y BETWEEN ${yRef - radiusM} AND ${yRef + radiusM}
+              AND t.month >= date('now', '-${monthsAgo} months')
+        `;
+
+        if (flatTypes && flatTypes.length > 0) {
+            const typeList = flatTypes.map(t => `'${t}'`).join(",");
+            query += ` AND ft.name IN (${typeList})`;
+        }
+
+        const sel = db.prepare(query);
+        const xData = [];
+        const yData = [];
+
+        while (sel.step()) {
+            const row = sel.getAsObject();
+            // 3. Precise distance filter (Euclidean)
+            const dist = Math.sqrt(Math.pow(row.x - xRef, 2) + Math.pow(row.y - yRef, 2));
+            if (dist <= radiusM) {
+                xData.push(Math.floor(row.remaining_lease));
+                yData.push(row.price_per_sqft);
+            }
+        }
+        sel.free();
+
+        if (xData.length === 0) {
+            setIsLoading(false);
+            $("#info").text(`No transactions found within ${radiusM}m of ${foundAddr} in the last ${monthsAgo} months.`).show();
+            $("#plot-container").hide();
+            return;
+        }
+
+        // 4. Plot
+        $("#plot-container").show();
+        const data = [{
+            x: xData,
+            y: yData,
+            type: 'box',
+            name: 'Local PSF Distribution'
+        }];
+
+        const now = new Date();
+        const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+        const dayNum = d.getUTCDay() || 7;
+        d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+        const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+        const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+
+        const layout = {
+            title: {
+                text: `PSF vs Remaining Lease within ${radiusM}m of ${foundAddr}<br><span style="font-size: 0.8em; color: gray;">(${flatTypes ? flatTypes.join(", ") : 'All Types'}) - Last ${monthsAgo} months (Week ${weekNum} ${now.getFullYear()})</span>`,
+                font: { size: 16 }
+            },
+            xaxis: {
+                title: 'Remaining Lease (Years)',
+                type: 'linear',
+                dtick: 1,
+                autorange: 'reversed',
+                showgrid: true,
+                gridcolor: '#e2e2e2'
+            },
+            yaxis: {
+                title: 'Price Per Square Foot (SGD)',
+                showgrid: true,
+                gridcolor: '#e2e2e2'
+            },
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white'
+        };
+
+        Plotly.newPlot('plot-container', data, layout);
+        setIsLoading(false);
+
+    } catch (err) {
+        setIsLoading(false);
+        showError("Error: " + err.message);
+    }
 }

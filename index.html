@@ -66,27 +66,65 @@
     </div>
 
     <div id="output-box" class="container-fluid">
-        <div id="filter-controls" class="row g-2 mb-3 align-items-end" style="display:none;">
-            <div class="col-md-3">
-                <label for="filter-towns" class="form-label small">Towns</label>
-                <select id="filter-towns" class="form-select" multiple title="Select Towns"></select>
-            </div>
-            <div class="col-md-3">
-                <label for="filter-flat-types" class="form-label small">Flat Types</label>
-                <select id="filter-flat-types" class="form-select" multiple title="Select Flat Types"></select>
-            </div>
-            <div class="col-md-4">
-                <label for="filter-exclude-models" class="form-label small">Exclude Models</label>
-                <select id="filter-exclude-models" class="form-select" multiple title="Exclude Models"></select>
-            </div>
-            <div class="col-md-2">
-                <label for="filter-months" class="form-label small">Months Ago</label>
-                <input type="number" id="filter-months" class="form-control" value="60" min="1">
-            </div>
-        </div>
+        <ul class="nav nav-tabs mb-4" id="analysisTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="trends-tab" data-bs-toggle="tab" data-bs-target="#trends-pane" type="button" role="tab">Market Trends</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="neighbour-tab" data-bs-toggle="tab" data-bs-target="#neighbour-pane" type="button" role="tab">Neighbourhood Search</button>
+            </li>
+        </ul>
 
-        <div class="d-flex mt-3 mb-3 justify-content-end">
-            <button class="btn btn-success px-5" id="plot-run" type="button" onclick="plotAnalysis()">Update Analysis Plot</button>
+        <div class="tab-content" id="analysisTabsContent">
+            <!-- Market Trends Tab -->
+            <div class="tab-pane fade show active" id="trends-pane" role="tabpanel">
+                <div id="filter-controls" class="row g-2 mb-3 align-items-end" style="display:none;">
+                    <div class="col-md-3">
+                        <label for="filter-towns" class="form-label small">Towns</label>
+                        <select id="filter-towns" class="form-select" multiple title="Select Towns"></select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="filter-flat-types" class="form-label small">Flat Types</label>
+                        <select id="filter-flat-types" class="form-select" multiple title="Select Flat Types"></select>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="filter-exclude-models" class="form-label small">Exclude Models</label>
+                        <select id="filter-exclude-models" class="form-select" multiple title="Exclude Models"></select>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="filter-months" class="form-label small">Months Ago</label>
+                        <input type="number" id="filter-months" class="form-control" value="60" min="1">
+                    </div>
+                </div>
+                <div class="d-flex mb-3 justify-content-end">
+                    <button class="btn btn-success px-5" id="plot-run" type="button" onclick="plotAnalysis()">Update Trends Plot</button>
+                </div>
+            </div>
+
+            <!-- Neighbourhood Tab -->
+            <div class="tab-pane fade" id="neighbour-pane" role="tabpanel">
+                <div class="row g-2 mb-3 align-items-end">
+                    <div class="col-md-4">
+                        <label for="target-address" class="form-label small">Target Address</label>
+                        <input type="text" id="target-address" class="form-control" placeholder="e.g. 406 Ang Mo Kio Ave 10">
+                    </div>
+                    <div class="col-md-2">
+                        <label for="target-radius" class="form-label small">Radius (meters)</label>
+                        <input type="number" id="target-radius" class="form-control" value="1000" min="100" step="100">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="neighbour-flat-types" class="form-label small">Flat Types</label>
+                        <select id="neighbour-flat-types" class="form-select" multiple title="Select Flat Types"></select>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="neighbour-months" class="form-label small">Months Ago</label>
+                        <input type="number" id="neighbour-months" class="form-control" value="24" min="1">
+                    </div>
+                </div>
+                <div class="d-flex mb-3 justify-content-end">
+                    <button class="btn btn-primary px-5" id="neighbour-run" type="button" onclick="plotNeighbourhood()">Search Neighbourhood</button>
+                </div>
+            </div>
         </div>
 
         <div class="alert alert-danger" id="error" style="display: none"></div>
