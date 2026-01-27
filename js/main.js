@@ -511,10 +511,12 @@ function plotAnalysis() {
             gridcolor: '#e2e2e2'
         },
         plot_bgcolor: 'white',
-        paper_bgcolor: 'white'
+        paper_bgcolor: 'white',
+        autosize: true
     };
 
-    Plotly.newPlot('plot-container', data, layout);
+    const config = { responsive: true };
+    Plotly.newPlot('plot-container', data, layout, config);
 }
 
 async function plotNeighbourhood() {
@@ -630,10 +632,12 @@ async function plotNeighbourhood() {
                 gridcolor: '#e2e2e2'
             },
             plot_bgcolor: 'white',
-            paper_bgcolor: 'white'
+            paper_bgcolor: 'white',
+            autosize: true
         };
 
-        Plotly.newPlot('plot-container', data, layout);
+        const config = { responsive: true };
+        Plotly.newPlot('plot-container', data, layout, config);
         setIsLoading(false);
 
     } catch (err) {
