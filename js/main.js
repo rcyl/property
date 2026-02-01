@@ -11,6 +11,13 @@ let loadedTableNames = [];
 const errorBox = $("#error");
 const infoBox = $("#info");
 
+// Pagination State
+let currentDataMode = null; // 'sql' or 'js'
+let currentSqlBase = null;  // For SQL mode
+let currentJsData = [];     // For JS mode
+let currentPage = 0;
+const PAGE_SIZE = 30;
+
 const selectFormatter = function (item) {
     const index = item.text.indexOf("(");
     if (index > -1) {
@@ -21,6 +28,84 @@ const selectFormatter = function (item) {
         return item.text;
     }
 };
+
+function setPage(el, next) {
+    if (next) {
+        currentPage++;
+    } else {
+        if (currentPage > 0) currentPage--;
+    }
+    renderCurrentPage();
+}
+
+function renderCurrentPage() {
+    $("#bottom-bar").removeClass("d-none");
+    
+    let totalPages = 0;
+    if (currentDataMode === 'sql') {
+        const countQuery = currentSqlBase.replace(/SELECT\s+.*?\s+FROM/si, "SELECT COUNT(*) as count FROM");
+        const sel = db.prepare(countQuery);
+        if (sel.step()) {
+            const count = sel.getAsObject().count;
+            totalPages = Math.ceil(count / PAGE_SIZE);
+        }
+        sel.free();
+
+        const paginatedQuery = `${currentSqlBase} ORDER BY t.month DESC LIMIT ${PAGE_SIZE} OFFSET ${currentPage * PAGE_SIZE}`;
+        renderQuery(paginatedQuery);
+    } else if (currentDataMode === 'js') {
+        totalPages = Math.ceil(currentJsData.length / PAGE_SIZE);
+        const start = currentPage * PAGE_SIZE;
+        const end = start + PAGE_SIZE;
+        const pageData = currentJsData.slice(start, end);
+        renderTableFromArray(pageData);
+    }
+
+    $("#pager").text(`Page ${currentPage + 1} / ${totalPages || 1}`);
+    $("#page-prev").prop("disabled", currentPage === 0);
+    $("#page-next").prop("disabled", (currentPage + 1) >= totalPages);
+}
+
+function renderTableFromArray(data) {
+    const dataBox = $("#data");
+    const thead = dataBox.find("thead").find("tr");
+    const tbody = dataBox.find("tbody");
+
+    thead.empty();
+    tbody.empty();
+    errorBox.hide();
+    infoBox.hide();
+    dataBox.show();
+
+    if (data.length === 0) {
+        infoBox.text("No data found.").show();
+        return;
+    }
+
+    const headers = ["Month", "Address", "Flat Type", "Floor", "Area (sqm)", "Price", "Lease Left"];
+    headers.forEach(h => thead.append(`<th><span>${h}</span></th>`));
+
+    data.forEach(row => {
+        const tr = $('<tr>');
+        const values = [
+            row.month,
+            row.address,
+            row.flat_type,
+            row.storey_range,
+            row.floor_area_sqm,
+            "$" + row.resale_price.toLocaleString(),
+            Number(row.remaining_lease).toFixed(2) + " yrs"
+        ];
+        
+        values.forEach(v => {
+            let valStr = htmlEncode(String(v));
+            tr.append(`<td><span title="${valStr}">${valStr}</span></td>`);
+        });
+        tbody.append(tr);
+    });
+
+    dataBox.editableTableWidget();
+}
 
 initialize();
 
@@ -183,6 +268,28 @@ function populateFilters() {
     } catch (e) { 
         console.log("Flat Models table not found or empty", e); 
     }
+
+    // Populate Storey Ranges
+    try {
+        const storeySelects = [$("#filter-storey"), $("#neighbour-storey")];
+        storeySelects.forEach(sel => {
+            if (sel.hasClass("select2-hidden-accessible")) {
+                sel.select2('destroy');
+            }
+            sel.empty();
+        });
+
+        const storeySel = db.prepare("SELECT DISTINCT storey_range FROM transactions ORDER BY storey_range");
+        while (storeySel.step()) {
+            const name = storeySel.get()[0];
+            storeySelects.forEach(sel => sel.append(new Option(name, name)));
+        }
+        storeySel.free();
+        
+        storeySelects.forEach(sel => sel.select2({ theme: "bootstrap-5", placeholder: "All Storeys", width: '100%', allowClear: true }));
+    } catch (e) {
+        console.log("Error populating storey ranges", e);
+    }
 }
 
 function getTableRowsCount(name) {
@@ -299,8 +406,13 @@ function renderQuery(query) {
         const tr = $('<tr>');
         const s = sel.get();
         for (let i = 0; i < s.length; i++) {
-            let value = htmlEncode(s[i]);
-            tr.append(`<td><span title="${value}">${value}</span></td>`);
+            let value = s[i];
+            // Format remaining_lease if it's that column (index 6 based on plotAnalysis SQL)
+            if (currentDataMode === 'sql' && i === 6 && typeof value === 'number') {
+                value = value.toFixed(2);
+            }
+            let encoded = htmlEncode(String(value));
+            tr.append(`<td><span title="${encoded}">${encoded}</span></td>`);
         }
         tbody.append(tr);
     }
@@ -416,6 +528,7 @@ function plotAnalysis() {
     const selectedTypes = $("#filter-flat-types").val(); // Array of strings or null
     const flatModelsExclude = $("#filter-exclude-models").val(); // Array of strings or null
     const monthsAgo = $("#filter-months").val() || 60;
+    const selectedStorey = $("#filter-storey").val(); // Array of strings or null
 
     let query = `
         SELECT 
@@ -441,6 +554,11 @@ function plotAnalysis() {
     if (flatModelsExclude && flatModelsExclude.length > 0) {
         const excludeList = flatModelsExclude.map(m => `'${m}'`).join(",");
         query += ` AND fm.name NOT IN (${excludeList})`;
+    }
+
+    if (selectedStorey && selectedStorey.length > 0) {
+        const storeyList = selectedStorey.map(s => `'${s}'`).join(",");
+        query += ` AND t.storey_range IN (${storeyList})`;
     }
 
     query += ` ORDER BY remaining_lease_int DESC`;
@@ -481,6 +599,7 @@ function plotAnalysis() {
     // Generate dynamic title matching plot.py
     const townTitle = (selectedTowns && selectedTowns.length > 0) ? selectedTowns.join(", ") : 'ALL TOWNS';
     const flatTypeTitle = (selectedTypes && selectedTypes.length > 0) ? selectedTypes.join(", ") : 'ALL FLATS';
+    const storeyTitle = (selectedStorey && selectedStorey.length > 0) ? `(Storey: ${selectedStorey.join(", ")})` : '(All Storeys)';
     const excludeTitle = (flatModelsExclude && flatModelsExclude.length > 0) ? `excluding ${flatModelsExclude.join(", ")}` : '';
     
     // Calculate ISO Week (approximate but matching standard JS week calculation)
@@ -494,7 +613,7 @@ function plotAnalysis() {
 
     const layout = {
         title: {
-            text: `PSF vs Remaining Lease for ${flatTypeTitle} in ${townTitle}<br><span style="font-size: 0.8em; color: gray;">${excludeTitle}<br>(Last ${monthsAgo} months, Week ${weekNum} ${year})</span>`,
+            text: `PSF vs Remaining Lease for ${flatTypeTitle} in ${townTitle}<br><span style="font-size: 0.8em; color: gray;">${storeyTitle} ${excludeTitle}<br>(Last ${monthsAgo} months, Week ${weekNum} ${year})</span>`,
             font: { size: 18 }
         },
         xaxis: {
@@ -517,6 +636,50 @@ function plotAnalysis() {
 
     const config = { responsive: true };
     Plotly.newPlot('plot-container', data, layout, config);
+
+    // Setup Table for Trends (SQL Mode)
+    // We construct a query that fetches user-friendly columns
+    let tableQuery = `
+        SELECT 
+            t.month,
+            (b.address) AS full_address,
+            ft.name AS flat_type,
+            t.storey_range,
+            t.floor_area_sqm,
+            t.resale_price,
+            t.remaining_lease
+        FROM transactions t
+        JOIN blocks b ON t.block_id = b.id
+        JOIN towns tw ON t.town_id = tw.id
+        JOIN flat_types ft ON t.flat_type_id = ft.id
+        JOIN flat_models fm ON t.flat_model_id = fm.id
+        WHERE t.month >= date('now', '-${monthsAgo} months')
+    `;
+
+    if (selectedTowns && selectedTowns.length > 0) {
+        const townList = selectedTowns.map(t => `'${t}'`).join(",");
+        tableQuery += ` AND tw.name IN (${townList})`;
+    }
+
+    if (selectedTypes && selectedTypes.length > 0) {
+        const typeList = selectedTypes.map(t => `'${t}'`).join(",");
+        tableQuery += ` AND ft.name IN (${typeList})`;
+    }
+
+    if (flatModelsExclude && flatModelsExclude.length > 0) {
+        const excludeList = flatModelsExclude.map(m => `'${m}'`).join(",");
+        tableQuery += ` AND fm.name NOT IN (${excludeList})`;
+    }
+
+    if (selectedStorey && selectedStorey.length > 0) {
+        const storeyList = selectedStorey.map(s => `'${s}'`).join(",");
+        tableQuery += ` AND t.storey_range IN (${storeyList})`;
+    }
+
+    currentDataMode = 'sql';
+    currentSqlBase = tableQuery;
+    currentPage = 0;
+    renderCurrentPage();
 }
 
 async function plotNeighbourhood() {
@@ -529,6 +692,7 @@ async function plotNeighbourhood() {
     const radiusM = parseFloat($("#target-radius").val()) || 1000;
     const monthsAgo = $("#neighbour-months").val() || 24;
     const flatTypes = $("#neighbour-flat-types").val();
+    const selectedStorey = $("#neighbour-storey").val();
 
     if (!targetAddr) {
         showError("Please enter a target address.");
@@ -558,6 +722,11 @@ async function plotNeighbourhood() {
         // 2. Query bounding box from DB
         let query = `
             SELECT 
+                t.month,
+                b.address,
+                t.storey_range,
+                t.floor_area_sqm,
+                t.resale_price,
                 t.remaining_lease,
                 (t.resale_price / (t.floor_area_sqm * 10.7639)) AS price_per_sqft,
                 b.x, b.y,
@@ -575,9 +744,15 @@ async function plotNeighbourhood() {
             query += ` AND ft.name IN (${typeList})`;
         }
 
+        if (selectedStorey && selectedStorey.length > 0) {
+            const storeyList = selectedStorey.map(s => `'${s}'`).join(",");
+            query += ` AND t.storey_range IN (${storeyList})`;
+        }
+
         const sel = db.prepare(query);
         const xData = [];
         const yData = [];
+        const tableData = [];
 
         while (sel.step()) {
             const row = sel.getAsObject();
@@ -586,6 +761,7 @@ async function plotNeighbourhood() {
             if (dist <= radiusM) {
                 xData.push(Math.floor(row.remaining_lease));
                 yData.push(row.price_per_sqft);
+                tableData.push(row);
             }
         }
         sel.free();
@@ -594,8 +770,22 @@ async function plotNeighbourhood() {
             setIsLoading(false);
             $("#info").text(`No transactions found within ${radiusM}m of ${foundAddr} in the last ${monthsAgo} months.`).show();
             $("#plot-container").hide();
+            $("#bottom-bar").addClass("d-none"); // Hide pager if no data
             return;
         }
+
+        // Setup Table for Neighbourhood (JS Mode)
+        // Sort by month descending
+        tableData.sort((a, b) => {
+            if (a.month < b.month) return 1;
+            if (a.month > b.month) return -1;
+            return 0;
+        });
+
+        currentDataMode = 'js';
+        currentJsData = tableData;
+        currentPage = 0;
+        renderCurrentPage();
 
         // 4. Plot
         $("#plot-container").show();
@@ -613,9 +803,11 @@ async function plotNeighbourhood() {
         const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
         const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 
+        const storeyTitle = (selectedStorey && selectedStorey.length > 0) ? `(Storey: ${selectedStorey.join(", ")})` : '(All Storeys)';
+
         const layout = {
             title: {
-                text: `PSF vs Remaining Lease within ${radiusM}m of ${foundAddr}<br><span style="font-size: 0.8em; color: gray;">(${flatTypes ? flatTypes.join(", ") : 'All Types'}) - Last ${monthsAgo} months (Week ${weekNum} ${now.getFullYear()})</span>`,
+                text: `PSF vs Remaining Lease within ${radiusM}m of ${foundAddr}<br><span style="font-size: 0.8em; color: gray;">${storeyTitle} (${flatTypes ? flatTypes.join(", ") : 'All Types'}) - Last ${monthsAgo} months (Week ${weekNum} ${now.getFullYear()})</span>`,
                 font: { size: 16 }
             },
             xaxis: {
